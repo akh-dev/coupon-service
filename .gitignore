@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+coupons-service
 
 # Test binary, build with `go test -c`
 *.test
