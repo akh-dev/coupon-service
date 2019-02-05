@@ -1,4 +1,4 @@
-package couponservice
+package dblayer
 
 import (
 	"context"
@@ -20,9 +20,36 @@ const (
 	DB_COUPON_COLLECTION string = "coupons"
 )
 
-func (s *CouponService) createCoupons(coupons []api.Coupon) (*mongo.InsertManyResult, error) {
+type Interface interface {
+	CreateCoupons(coupons []api.Coupon) (*mongo.InsertManyResult, error)
+	UpdateCoupons(coupons []api.Coupon) (int64, error)
+	FindByIds(ids []interface{}) ([]api.Coupon, error)
+	SearchFromRequest(reqFilter *api.CouponFilter) ([]api.Coupon, error)
+}
 
-	db := s.mongoClient.Database(s.dbName)
+type T struct {
+	mongoClient *mongo.Client
+	dbName      string
+	timeout     time.Duration
+}
+
+func New(client *mongo.Client, dbName string, timeout time.Duration) (*T, error) {
+	if client == nil {
+		return nil, errors.Errorf("a valid mongo client must be provided")
+	}
+
+	db := &T{
+		mongoClient: client,
+		dbName:      dbName,
+		timeout:     timeout,
+	}
+
+	return db, nil
+}
+
+func (dbl *T) CreateCoupons(coupons []api.Coupon) (*mongo.InsertManyResult, error) {
+
+	db := dbl.mongoClient.Database(dbl.dbName)
 	couponColl := db.Collection(DB_COUPON_COLLECTION)
 
 	documents := []interface{}{}
@@ -36,7 +63,7 @@ func (s *CouponService) createCoupons(coupons []api.Coupon) (*mongo.InsertManyRe
 		})
 
 	}
-	ctx, _ := context.WithTimeout(context.Background(), s.timeout)
+	ctx, _ := context.WithTimeout(context.Background(), dbl.timeout)
 	res, err := couponColl.InsertMany(ctx, documents)
 	if err != nil {
 		err = errors.Wrap(err, "failed to write new coupons to the db")
@@ -48,9 +75,9 @@ func (s *CouponService) createCoupons(coupons []api.Coupon) (*mongo.InsertManyRe
 
 }
 
-func (s *CouponService) updateCoupons(coupons []api.Coupon) (int64, error) {
+func (dbl *T) UpdateCoupons(coupons []api.Coupon) (int64, error) {
 
-	db := s.mongoClient.Database(s.dbName)
+	db := dbl.mongoClient.Database(dbl.dbName)
 	couponColl := db.Collection(DB_COUPON_COLLECTION)
 
 	var UpdatedCnt int64 = 0
@@ -71,7 +98,7 @@ func (s *CouponService) updateCoupons(coupons []api.Coupon) (int64, error) {
 			fields = append(fields, bson.E{"expiry", cpn.Expiry})
 		}
 
-		ctx, _ := context.WithTimeout(context.Background(), s.timeout)
+		ctx, _ := context.WithTimeout(context.Background(), dbl.timeout)
 		res, err := couponColl.UpdateOne(
 			ctx,
 			bson.D{
@@ -98,30 +125,31 @@ func (s *CouponService) updateCoupons(coupons []api.Coupon) (int64, error) {
 
 }
 
-func (s *CouponService) findByIds(ids []interface{}) ([]api.Coupon, error) {
+func (dbl *T) FindByIds(ids []interface{}) ([]api.Coupon, error) {
 	idsBsonA := bson.A{}
 	for _, id := range ids {
 		idsBsonA = append(idsBsonA, id)
 	}
 
 	filter := bson.D{{"_id", bson.D{{"$in", idsBsonA}}}}
-	return s.findManyWithFilter(filter)
+	return dbl.findManyWithFilter(filter)
 }
 
-func (s *CouponService) findManyWithFilter(filter interface{}) ([]api.Coupon, error) {
-	if s.debug {
-		log.Printf("searching with filter %s", filter)
-	}
+func (dbl *T) findManyWithFilter(filter interface{}) ([]api.Coupon, error) {
 
-	db := s.mongoClient.Database(s.dbName)
+	db := dbl.mongoClient.Database(dbl.dbName)
 	couponColl := db.Collection(DB_COUPON_COLLECTION)
-	ctx, _ := context.WithTimeout(context.Background(), s.timeout)
+	ctx, _ := context.WithTimeout(context.Background(), dbl.timeout)
 	cur, err := couponColl.Find(ctx, filter)
 	if err != nil {
 		log.Println(err.Error())
 		return nil, err
 	}
-	defer cur.Close(ctx)
+	defer func() {
+		if err := cur.Close(ctx); err != nil {
+			log.Println(err.Error())
+		}
+	}()
 
 	coupons := []api.Coupon{}
 	for cur.Next(ctx) {
@@ -142,15 +170,15 @@ func (s *CouponService) findManyWithFilter(filter interface{}) ([]api.Coupon, er
 	return coupons, nil
 }
 
-func (s *CouponService) searchFromRequest(reqFilter *api.CouponFilter) ([]api.Coupon, error) {
-	dbFilter, err := buildFilterFromRequest(reqFilter)
+func (dbl *T) SearchFromRequest(reqFilter *api.CouponFilter) ([]api.Coupon, error) {
+	dbFilter, err := dbl.buildFilterFromRequest(reqFilter)
 	if err != nil {
 		return nil, err
 	}
-	return s.findManyWithFilter(dbFilter)
+	return dbl.findManyWithFilter(dbFilter)
 }
 
-func buildFilterFromRequest(reqFilter *api.CouponFilter) (bson.D, error) {
+func (dbl *T) buildFilterFromRequest(reqFilter *api.CouponFilter) (bson.D, error) {
 	fieldsFilter := bson.D{}
 
 	if reqFilter == nil {

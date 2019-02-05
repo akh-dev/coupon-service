@@ -81,7 +81,13 @@ func writeResponse(w http.ResponseWriter, respObj *api.Response) {
 		return
 	}
 
-	w.Write(response)
+	n, err := w.Write(response)
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
+	log.Printf("wrote %d bytes in the response", n)
+
 }
 
 func respondWithCoupons(w http.ResponseWriter, coupons []api.Coupon) {

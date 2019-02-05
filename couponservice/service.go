@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mongodb/mongo-go-driver/mongo/readpref"
+	"github.com/akh-dev/coupons-service/dblayer"
 
 	"github.com/akh-dev/coupons-service/api"
 	"github.com/akh-dev/coupons-service/config"
@@ -17,11 +17,10 @@ import (
 )
 
 type CouponService struct {
-	mongoClient *mongo.Client
-	port        string
-	dbName      string
-	timeout     time.Duration
-	debug       bool
+	db      dblayer.Interface
+	timeout time.Duration
+	port    string
+	debug   bool
 }
 
 func New(cfg *config.Config) (*CouponService, error) {
@@ -42,18 +41,17 @@ func New(cfg *config.Config) (*CouponService, error) {
 		return nil, err
 	}
 
-	err = client.Ping(ctx, readpref.Primary())
+	db, err := dblayer.New(client, cfg.DB.Name, timeout)
 	if err != nil {
-		log.Printf("Failed to ping mongo server: %s", err.Error())
+		log.Printf("Failed to create db layer object: %s", err.Error())
 		return nil, err
 	}
 
 	service := &CouponService{
-		mongoClient: client,
-		port:        cfg.Service.Port,
-		dbName:      cfg.DB.Name,
-		timeout:     timeout,
-		debug:       cfg.Service.Debug,
+		db:      db,
+		timeout: timeout,
+		port:    cfg.Service.Port,
+		debug:   cfg.Service.Debug,
 	}
 
 	return service, nil
@@ -107,7 +105,7 @@ func (s *CouponService) handleListCoupons(w http.ResponseWriter, r *api.Request)
 		log.Printf("request data: %s", string(r.Data))
 	}
 
-	coupons, err := s.searchFromRequest(filter)
+	coupons, err := s.db.SearchFromRequest(filter)
 	if err != nil {
 		respObj := &api.Response{Error: []string{err.Error()}}
 		writeResponse(w, respObj)
@@ -139,7 +137,7 @@ func (s *CouponService) handleCreateCoupon(w http.ResponseWriter, r *api.Request
 		log.Println("Creating new coupons")
 	}
 
-	res, err := s.createCoupons(cpnCollection.Coupons)
+	res, err := s.db.CreateCoupons(cpnCollection.Coupons)
 	if err != nil {
 		respObj := &api.Response{Error: []string{err.Error()}}
 		writeResponse(w, respObj)
@@ -147,7 +145,7 @@ func (s *CouponService) handleCreateCoupon(w http.ResponseWriter, r *api.Request
 	}
 	log.Printf("%d coupons created", len(res.InsertedIDs))
 
-	coupons, err := s.findByIds(res.InsertedIDs)
+	coupons, err := s.db.FindByIds(res.InsertedIDs)
 	if err != nil {
 		respObj := &api.Response{Error: []string{err.Error()}}
 		writeResponse(w, respObj)
@@ -178,7 +176,7 @@ func (s *CouponService) handleUpdateCoupon(w http.ResponseWriter, r *api.Request
 		log.Println("Updating coupons")
 	}
 
-	updCount, err := s.updateCoupons(cpnCollection.Coupons)
+	updCount, err := s.db.UpdateCoupons(cpnCollection.Coupons)
 	if err != nil {
 		respObj := &api.Response{Error: []string{err.Error()}}
 		writeResponse(w, respObj)
@@ -192,7 +190,7 @@ func (s *CouponService) handleUpdateCoupon(w http.ResponseWriter, r *api.Request
 		cpnIDs = append(cpnIDs, cpn.Id)
 	}
 
-	coupons, err := s.findByIds(cpnIDs)
+	coupons, err := s.db.FindByIds(cpnIDs)
 	if err != nil {
 		respObj := &api.Response{Error: []string{err.Error()}}
 		writeResponse(w, respObj)
